@@ -1,0 +1,360 @@
+---
+title: "Project1: R Notebook Philosophy Data Story"
+author: "Yudan Zhang"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+# Project1 Introduction: 
+
+The goal of this project1 is going to provide analysis mainly on 3 authors (Keynes, Ricardo, Smith) from capitalism. 
+
+### Outline of project
+
+ * Packages loading
+ * Data edit & clean 
+ * Exploratory Data Analysis (EDA)
+     + Title
+     + Author
+     + School
+     + Original publication date & Corpus edition date
+     + Summary tree diagram for school, author & title 
+
+ * Analysis of capitalism
+     +  Why Capitalism ?
+     +  Word cloud for capitalism
+     +  Sentence_length variation by author
+     +  Comparison of top 10 frequent words by author
+     
+  * Analysis of sentiment 
+     + Keynes
+     + Ricardo
+     + Simith
+  
+  * Conclusion
+
+## Packages loading
+```{r message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(plotly) # tree diagram 
+library(tm)
+# word cloud
+library(wordcloud)
+library(RColorBrewer)
+library(SnowballC)
+library(gridExtra) # arrange plot for sentence_length comparison
+library(syuzhet) # sentiment analysis
+```
+
+## Date Edit & Clean
+
+There are 360808 observations with 11 variables (title, author, school, sentence_spacy, sentence_str, original_publication_date, corpus_edition_date, sentence_length, sentence_lowered, tokenized_txt, lemmatized_str) in this dataset. Only 1 numeric variable (sentence_length), 2 time variables (original_publication_date, corpus_edition_date), and the rest are character variables. No missing values / 'nan' exists for each variable and no duplicated observations in the dataset. 
+
+```{r}
+df = read.csv('/Users/sherry/Documents/Github/fall2022-project1-YudanZhang/data/philosophy_data.csv')
+head(df)
+```
+
+```{r warning=FALSE}
+sprintf('the number of rows: %d', dim(df)[1])
+sprintf('the number of columns: %d', dim(df)[2])
+# check missing values & nan
+is.null(df)
+colSums(is.na(df))
+# remove duplicated rows
+df <- df[!duplicated(df), ]
+```
+
+## EDA 
+
+The EDA of this project focus on exploring 5 of the 11 variables (title, author, school, original_publication_date, corpus_edition_date). The number of distinct levels for each variable are summarized in the table below. 
+
+```{r warning=FALSE}
+# general summary of data set ----
+summary(df[,c('sentence_length','original_publication_date','corpus_edition_date')])
+# summary of distinct values for each variables 
+sapply(df, function(x) n_distinct(x))
+df_noticed <- df[,c('title','author','school','original_publication_date','corpus_edition_date')]
+# apply(): 1: rows & 2: columns
+df_noticed_summary <- apply(df_noticed, MARGIN = 2, FUN = table) 
+```
+
+### Title 
+
+```{r warning=FALSE}
+# dataframe for unique values
+title <- data.frame('title' = names(df_noticed_summary$title), 
+                   'value' = unname(df_noticed_summary$title))
+# top 10 frequency
+title <- title %>% 
+  select(title, value.Freq) %>%
+  group_by(title) %>%
+  arrange(desc(value.Freq))
+head(title, 10)
+# histogram for density 
+plot_title <-
+  ggplot(title, aes(x = reorder(title,-value.Freq), y = value.Freq)) + 
+  geom_col(width = 0.8, fill = 'darkturquoise') + 
+  labs(x = "title",y = "count") +
+  ggtitle("Frequency of titles") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+plot_title
+```
+
+### Author 
+
+```{r}
+author <- data.frame('author' = names(df_noticed_summary$author), 'value' = unname(df_noticed_summary$author))
+author <- author %>% select(author, value.Freq) %>% group_by(author) %>% arrange(desc(value.Freq))
+head(author, 10)
+plot_author <- ggplot(author, aes(x = reorder(author,-value.Freq), y = value.Freq)) + geom_col(width = 0.8, fill = 'darkturquoise') + labs(x = "author",y = "count") + ggtitle("Frequency of authors") + theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = 0.5))
+plot_author
+```
+
+### School
+
+```{r}
+school <- data.frame('school' = names(df_noticed_summary$school), 'value' = unname(df_noticed_summary$school))
+school <- school %>% select(school, value.Freq) %>% group_by(school) %>% arrange(desc(value.Freq))
+head(school, 10)
+plot_school <- ggplot(school, aes(x = reorder(school,-value.Freq), y = value.Freq)) + geom_col(width = 0.8, fill = 'darkturquoise') + labs(x = "school",y = "count") + ggtitle("Frequency of schools") + theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = 0.5))
+plot_school
+```
+
+### Original publication date & Corpus edition date
+
+```{r message=FALSE, warning=FALSE}
+publication <- data.frame('year' = names(df_noticed_summary$original_publication_date), 
+                   'value' = unname(df_noticed_summary$original_publication_date),
+                   'type' = 'publication')
+edition <- data.frame('year' = names(df_noticed_summary$corpus_edition_date), 
+                   'value' = unlist(unname(df_noticed_summary$corpus_edition_date)), 
+                   'type' = 'edition')
+
+timeline <- rbind(publication, edition) 
+timeline <- timeline %>%
+  select(year,value.Freq,type) 
+# publication vs. edition plot ----
+plot_timeline <- ggplot(timeline, aes(x = year, y = value.Freq, color = type)) + 
+  geom_point() +
+  stat_smooth(aes(group = 1), se = FALSE) +
+  labs(x = "year",y = "count") + ggtitle("publication & edition over time") +
+  scale_x_discrete(breaks = c(1637, 1710, 1807, 1907,1970, 2001))
+plot_timeline
+```
+
+### Summary tree diagram for school, author & title 
+
+```{r message=FALSE, warning=FALSE}
+#### create dataset for tree diagram ----
+dat <- df[,c('school','author','title')]
+
+test <- data.frame('id' = 'school', 'label' = 'school', 'parent' = '')
+A = data.frame()
+B = list()
+C = list()
+for(i in 1:length(unique(dat$school))) {
+  A[i,'parent'] = 'school'
+  filter1 = unique(dat$school)[i]
+  A[i,'id'] = filter1
+  A[i,'label'] = filter1
+  # filter 2nd dataset for author
+  B[[filter1]] <- unique(dat[dat$school == filter1, ]$author)
+  }
+for (j in 1:length(unique(dat$author))){
+  # filter 3rd dataset for title
+  filter2 = unique(dat$author)[j]
+  C[[filter2]] <- unique(dat[dat$author == filter2, ]$title)
+  }
+# edit list B,C to dataframe
+B <- stack(B) %>% mutate('label' = values) %>% rename( 'id' = 'values','parent' = 'ind')
+C <- stack(C) %>% mutate('label' = values) %>% rename( 'id' = 'values','parent' = 'ind')
+test <- bind_rows(test, A, B, C)
+
+#### plot tree diagram ----
+fig <- plot_ly(
+  type = 'treemap',
+  ids = test$id,
+  labels = test$label,
+  parents = test$parent)
+fig <- fig %>% 
+  layout(uniformtext = list(minsize=10, mode='hide')) %>% 
+  layout(title = 'tree diagram for school, author & title')
+fig
+```
+
+## Capitalism analysis 
+
+### Why Capitalism?
+
+As said on [COLUMBIA STUDIES IN THE HISTORY OF U.S. CAPITALISM](https://cup.columbia.edu/hoc), "Capitalism has served as an engine of growth, a source of inequality, and a catalyst for conflict in American history", the capitalism has a great impact on the American society. By exploring the words of the philosophers of capitalism, we might have a better understanding of how capitalism related to the American society & people, and wonder if the idea of capitalism changes over time. The 3 represents of capitalism included in this dataset are John Maynard Keynes, David Ricardo & Adam Smith.
+
+ * [John Maynard Keynes](https://en.wikipedia.org/wiki/John_Maynard_Keynes) (05 June 1883 – 21 April 1946)
+
+English economist, one of the most influential economists of the 20th century. His ideas fundamentally changed the theory and practice of macroeconomics & the economic policies of governments. 
+
+ * [David Ricardo](https://en.wikipedia.org/wiki/David_Ricardo) (18 April 1772 – 11 September 1823)
+ 
+British political economist, an abolitionist, one of the most influential of the classical economists. As the Napoleonic Wars waged on, David Ricardo developed a disdain for the Corn Laws imposed by the British to encourage exports.
+
+ * [Adam Smith](https://en.wikipedia.org/wiki/Adam_Smith) (16 June 1723 – 17 July 1790) 
+ 
+Scottish economist & philosopher who was also known as "The Father of Economics". One of his great works, "The Wealth Of Nations" is used to reflect his thought in this project. 
+ 
+```{r}
+capitalism <- filter(df, author %in% c('Smith','Ricardo','Keynes'))
+Keynes <- filter(df,author == 'Keynes')
+Ricardo <- filter(df, author == 'Ricardo')
+Smith <- filter(df, author == 'Smith')
+```
+
+### Word cloud for capitalism
+
+```{r message=FALSE, warning=FALSE}
+# data table prepare
+# import data as a corpus
+word_tot <- Corpus(VectorSource(capitalism$sentence_lowered))
+word_tot <- tm_map(word_tot, stripWhitespace)
+word_tot <- tm_map(word_tot, content_transformer(tolower))
+word_tot <- tm_map(word_tot, removeWords, stopwords("english"))
+word_tot <- tm_map(word_tot, removeWords, character(0))
+word_tot <- tm_map(word_tot, removePunctuation)
+word_tot <- tm_map(word_tot, removeNumbers)
+dword_tot <- TermDocumentMatrix(word_tot)
+mword_tot <- as.matrix(dword_tot)
+sort <- sort(rowSums(mword_tot),decreasing = TRUE)
+dt_tot <- data.frame(word = names(sort),freq = sort)
+# word cloud plot
+wordcloud(words = dt_tot$word, freq = dt_tot$freq,
+          scale = c(4,0.5),
+          min.freq = 1,
+          max.words = 200, 
+          random.order = FALSE, 
+          rot.per = 0.35, 
+          colors = brewer.pal(8, "Dark2"))
+```
+
+### Sentence_length variation 
+
+```{r}
+source("/Users/sherry/Documents/Github/fall2022-project1-YudanZhang/lib/boxplot_stats.R")
+plot_sentence_length <- ggplot(data = capitalism, aes(x = author, y = sentence_length)) +
+  geom_boxplot(aes(fill = author)) +
+  stat_summary(fun.data = boxplot_stats, geom = "text", hjust = 0.5, vjust = 1) +
+  labs(x = "capitalism author",y = "Sentence length") +
+  ggtitle("Boxplots of sentence_length variation by capitalism authors") 
+plot_sentence_length
+```
+
+### Comparison of top 10 frequent words 
+
+```{r message=FALSE, warning=FALSE}
+#### Keynes word cloud ----
+word_K <- Corpus(VectorSource(Keynes$sentence_lowered))
+word_K <- tm_map(word_K, stripWhitespace)
+word_K <- tm_map(word_K, content_transformer(tolower))
+word_K <- tm_map(word_K, removeWords, stopwords("english"))
+word_K <- tm_map(word_K, removeWords, character(0))
+word_K <- tm_map(word_K, removePunctuation)
+word_K <- tm_map(word_K, removeNumbers)
+dword_K <- TermDocumentMatrix(word_K)
+mword_K <- as.matrix(dword_K)
+sort <- sort(rowSums(mword_K),decreasing = TRUE)
+dt_K <- data.frame(word = names(sort),freq = sort)
+# head(dt_K, 10)
+#### Ricardo word cloud ----
+word_R <- Corpus(VectorSource(Ricardo$sentence_lowered))
+word_R <- tm_map(word_R, stripWhitespace)
+word_R <- tm_map(word_R, content_transformer(tolower))
+word_R <- tm_map(word_R, removeWords, stopwords("english"))
+word_R <- tm_map(word_R, removeWords, character(0))
+word_R <- tm_map(word_R, removePunctuation)
+word_R <- tm_map(word_R, removeNumbers)
+dword_R <- TermDocumentMatrix(word_R)
+mword_R <- as.matrix(dword_R)
+sort <- sort(rowSums(mword_R),decreasing = TRUE)
+dt_R <- data.frame(word = names(sort),freq = sort)
+#### Smith word cloud ----
+word_S <- Corpus(VectorSource(Smith$sentence_lowered))
+word_S <- tm_map(word_S, stripWhitespace)
+word_S <- tm_map(word_S, content_transformer(tolower))
+word_S <- tm_map(word_S, removeWords, stopwords("english"))
+word_S <- tm_map(word_S, removeWords, character(0))
+word_S <- tm_map(word_S, removePunctuation)
+word_S <- tm_map(word_S, removeNumbers)
+dword_S <- TermDocumentMatrix(word_S)
+mword_S <- as.matrix(dword_S)
+sort <- sort(rowSums(mword_S),decreasing = TRUE)
+dt_S <- data.frame(word = names(sort),freq = sort)
+```
+```{r message=FALSE, warning=FALSE, fig.width = 4, fig.height = 8}
+### comparison of top 10 frequent words ----
+plot_K <- ggplot(dt_K[1:10,], aes(x = reorder(word,-freq),y = freq)) + geom_col(fill = 'coral1') + geom_text(aes(label = freq), vjust = -0.5) + labs(x = "Word", y = "Count") + ggtitle("Keynes") 
+plot_R <- ggplot(dt_R[1:10,], aes(x = reorder(word,-freq),y = freq)) + geom_col(fill = 'chartreuse1') + geom_text(aes(label = freq), vjust = -0.5) + labs(x = "Word") + ggtitle("Ricardo") + theme(axis.title.y = element_blank())
+plot_S <- ggplot(dt_S[1:10,], aes(x = reorder(word,-freq),y = freq)) + geom_col(fill = 'darkturquoise') + geom_text(aes(label = freq), vjust = -0.5) + labs(x = "Word") + ggtitle("Smith") + theme(axis.title.y = element_blank())
+grid.arrange(plot_K, plot_R, plot_S, ncol = 1, top = "comparison of top 10 frequent words by author") 
+```
+
+Noticed the "corn" word shown in the Ricardo frequent word, it supports the fact that he concerned the Corn Laws imposed by the British government. 
+ 
+### Sentiment analysis 
+
+```{r warning=FALSE}
+#### Keynes ----
+emo_K <- get_nrc_sentiment(Keynes$sentence_lowered)
+result_K <- data.frame(t(emo_K))
+#rowSums computes column sums across rows for each level of a grouping variable.
+new_result_K <- data.frame(rowSums(result_K))
+#name rows and columns of the dataframe
+names(new_result_K)[1] <- "count"
+new_result_K <- cbind("sentiment" = rownames(new_result_K), new_result_K)
+rownames(new_result_K) <- NULL
+# plot 
+slices_K <- new_result_K[1:8,"count"]
+lbls_K <- paste(new_result_K$sentiment, round(slices_K/sum(slices_K)*100), "%", sep = "")
+
+#### Ricardo ----
+emo_R <- get_nrc_sentiment(Ricardo$sentence_lowered)
+result_R <- data.frame(t(emo_R))
+new_result_R <- data.frame(rowSums(result_R))
+names(new_result_R)[1] <- "count"
+new_result_R <- cbind("sentiment" = rownames(new_result_R), new_result_R)
+rownames(new_result_R) <- NULL
+
+slices_R <- new_result_R[1:8,"count"]
+lbls_R <- paste(new_result_R$sentiment, round(slices_R/sum(slices_R)*100), "%", sep = "")
+
+#### Smith ----
+emo_S <- get_nrc_sentiment(Smith$sentence_lowered)
+result_S <- data.frame(t(emo_S))
+new_result_S <- data.frame(rowSums(result_S))
+names(new_result_S)[1] <- "count"
+new_result_S <- cbind("sentiment" = rownames(new_result_S), new_result_S)
+rownames(new_result_S) <- NULL
+
+slices_S <- new_result_S[1:8,"count"]
+lbls_S <- paste(new_result_S$sentiment, round(slices_S/sum(slices_S)*100), "%", sep = "")
+```
+
+```{r warning=FALSE}
+par(mfrow = c(1,3))
+pie(x = slices_K, label = lbls_K, col = rainbow(length(lbls_K)), main = "emotion pie chart of Keynes")
+pie(x = slices_R, label = lbls_R, col = rainbow(length(lbls_R)), main = "emotion pie chart of Ricardo")
+pie(x = slices_S, label = lbls_S, col = rainbow(length(lbls_S)), main = "emotion pie chart of Smith")
+```
+
+## Conclusion
+
+There is a lot of similarity between Keynes, Ricardo & Smith such as the average sentence length & emotional tone (trust > anticipation > joy > sadness / anger / fear) in their works.
+
+Even though the frequent words are not really in common, they both talked about money, commodities, and the country and labour. The former is the core of the market economy (just like the economic system of the United States) and the latter are the keywords in the political field. As shown in the analysis of emotion, even though they were born at different times, their passion for capitalist philosophy is the same.
+
+
+
+
+
+
+
